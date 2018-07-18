@@ -1,0 +1,76 @@
+---
+   - hosts: all
+     tasks:
+     - name: Instalando AIDE
+       yum:
+        name: aide
+        state: latest
+       register: result
+       ignore_errors: True
+
+     - name: Inicializando AIDE
+       command: aide --init
+       when: result is changed
+
+     - name: Adicinando itens que nao devem ser checados
+       blockinfile:
+        path: /etc/aide.conf
+        block: |
+         {{ item.name }}
+        marker: "# {mark} ANSIBLE MANAGED BLOCK {{ item.name }}"
+       with_items:
+        - name: "!/root/.ansible/tmp" 
+        - name: "!/root/.ansible/"
+        - name: "!/etc/aide.conf"
+       when: result is changed
+
+     - name: Salvando base AIDE
+       command: cp -f /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+       register: copia
+       when: result is changed
+
+     - meta: end_play
+       when: copia is changed
+
+     - name: Chacando integridade
+       command: aide --update
+       register: shell_result
+       ignore_errors: True
+
+     - name: Resultado da checagem
+       debug:
+        var: shell_result.stdout_lines 
+
+     - name: copiando log
+       fetch:
+        src: /var/log/aide/aide.log
+        dest: /root/aide_log/aide.log.{{ansible_hostname}}
+        flat: yes
+       when: shell_result is failed
+
+     - name: Enviando e-mail de notificacao
+       mail:
+        host: "servidor.smtp"
+        port: 587
+        username: "example@example.com"
+        password: "1q2w3e"
+        from: "example@example.com"
+        to: "cliente@gmail.com"
+        subject: 'Ansible-report servidor {{ansible_hostname}} com IP {{inventory_hostname}}'
+        body: '
+<h1> Notificacoes do servidor {{ansible_hostname}} </h1>
+
+<body> As alteracoes do servidor foram enviadas em anexo neste e-mail. </body> 
+<body> Alteracoes: </body>
+<body> {{ shell_result.stdout_lines }} </body> 
+'
+        attach: /root/aide_log/aide.log.{{ansible_hostname}}
+        secure: starttls
+        subtype: html
+       delegate_to: localhost
+       when: shell_result is failed
+
+     - name: Guardando base analisada
+       command: cp -f /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+       when: shell_result is failed 
+       
